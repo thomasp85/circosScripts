@@ -1,0 +1,56 @@
+#!/usr/bin/perl -w
+# Authors: Thomas Dybdal Pedersen
+# For license see /usr/biotools/CMG-biotools.license
+use strict;
+use Getopt::Long;
+
+my $filterlinks = "/usr/local/circos-0.62-1/tools/filterlinks/bin/filterlinks";
+
+#### INPUT CHECK
+my $input;
+my $gene;
+my $name;
+my $output;
+
+if ($#ARGV < 0){
+	print "\n";
+	print "USAGE: blastAtlas -f <organismName> -c <configFile> -o <outputFile> -tidy\n";
+	print "Creates a blast atlas of the organism given in <organismName> based on the setup in the config file.\n";
+	print "\n";
+	print "-f\tThe name of the gbk file to use; with or without the .gbk extension <REQUIRED>\n";
+	print "-c\tThe name of the config file created by blastAtlasCf <REQUIRED>\n";
+	print "-o\tThe name of the plot file to create. If not specified no plot will be made.\n\tA plot can subsequently be created with \`genewiz -p <outputFile> <configFile>\`\n";
+	print "-tidy\tOnly used if plot is created. If set, all created files except for the plot\n\twill be deleted when the program finishes\n";
+	print "\n";
+	exit;
+}
+
+GetOptions ("f=s"	=> \$input,
+			"g=s"	=> \$gene,
+			"n=s"	=> \$name,
+			"o=s"	=> \$output);
+
+die unless -e $input;
+
+my @filter;
+
+open IN, "<${input}";
+while(<IN>){
+	my @line = split;
+	next unless $line[0] ne "source";
+	next unless $line[0] ne "gene";
+	if($line[4] eq $gene){
+		my $select = $name." ".$line[1]." ".$line[2]." ".$line[4]."\n";
+		push(@filter, $select);
+	}
+}
+if($output){
+	open OUT, ">${output}";
+	select OUT;
+}
+foreach(@filter){
+	print;
+}
+if($output){
+	close OUT;
+}

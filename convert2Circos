@@ -1,0 +1,207 @@
+#!/usr/bin/perl -w
+# Authors: Thomas Dybdal Pedersen
+# For license see /usr/biotools/CMG-biotools.license
+use strict;
+use List::Util qw(sum);
+use Getopt::Long;
+
+my $location = "/media/sf_Documents/circosConv/";
+
+#### INPUT CHECK
+my $input;
+my $name;
+my $plot;
+
+if ($#ARGV < 0){
+	print "\n";
+	print "USAGE: convertAnn -f <dataFile> -n <chromosomeName> -o <outputFile>\n";
+	print "Convert annotation info from genewiz format to circos format\n";
+	print "\n";
+	print "-f\tThe name of the ann file to use <REQUIRED>\n";
+	print "-n\tThe name of the chromosome as given in the karyotype file for the circos plot <REQUIRED>\n";
+	print "-o\tThe prefix of the output files. The script will create 3 files:\n";
+	print "\t\t<outputFile>.plus.txt\n";
+	print "\t\t<outputFile>.minus.txt\n";
+	print "\t\t<outputFile>.ANN.txt\n";
+	print "\n";
+	exit;
+}
+
+GetOptions (	"f=s"	=> \$input,
+		"n=s"	=> \$name,
+		"plot"	=> \$plot);
+
+#### END OF INPUT CHECK
+
+my $length;
+
+open CONFIG, "<${input}.genomeatlas.cf" or open CONFIG, "<${input}.blastatlas.cf";
+while(<CONFIG>){
+	my @line = split;
+	if($line[0] eq "genomesize"){
+		$length = $line[1];
+		$length =~ s/\;//;
+		last;
+	}
+}
+close CONFIG;
+
+my $bin;
+if($length > 1e6){
+	$bin = 5000;
+}
+else {
+	$bin = 1000;
+}
+`mkdir data`;
+
+#### CREATE KARYOTYPE FILE
+open KARYO, ">karyotype.txt";
+print KARYO "chr - chr1 ".$name." 0 ".$length." purple";
+close KARYO;
+`mv karyotype.txt data/`;
+#### END OF KARYOTYPE CREATION
+
+
+#### CREATE LANES
+`${location}convertLane -f ${input}*curvature.gz -n chr1 -b 2500 -o data/curvature.txt`;
+`${location}convertLane -f ${input}*ornstein.gz -n chr1 -b 2500 -o data/ornstein.txt`;
+`${location}convertLane -f ${input}*travers.gz -n chr1 -b 2500 -o data/travers.txt`;
+`${location}convertLane -f ${input}*baseskews.col.gz -n chr1 -b 2500 -col 3 -o data/base3.txt`;
+`${location}convertLane -f ${input}*baseskews.col.gz -n chr1 -b 2500 -col 4 -o data/base4.txt`;
+#### END OF LANE CREATION
+
+
+#### CREATE ANNOTATION
+`${location}convertAnn -f ${input}*ann -n chr1 -o data/CDS`;
+#### END OF ANNOTATION CREATION
+
+
+#### CREATE REPEAT DATA
+`${location}repeatLinks -f ${input}.gbk -n chr1 -format 2 -o data/link`;
+`binLinks -bin_size ${bin} -links data/link.direct.txt -link_end 2 > data/hist.direct.txt`;
+`binLinks -bin_size ${bin} -links data/link.inverted.txt -link_end 2 > data/hist.inverted.txt`;
+#### END OF REPEAT DATA CREATION
+
+
+#### COPY CONFIGURATION FILES
+`mkdir etc`;
+`cp ${location}etc/* etc/`;
+#### END OF CONFIGURATION FILE COPY
+
+
+#### SETUP RANGES
+my @curv;
+my @orn;
+my @trav;
+my @base3;
+my @dataholder;
+open CURV, '<data/curvature.txt';
+while(<CURV>){
+	my @line = split;
+	chomp($line[3]);
+	push(@dataholder, $line[3]);
+}
+close CURV;
+@curv = (&average(@dataholder) - 3*&stdev(@dataholder), &average(@dataholder) + 3*&stdev(@dataholder));
+undef(@dataholder);
+
+open ORN, '<data/ornstein.txt';
+while(<ORN>){
+	my @line = split;
+	chomp($line[3]);
+	push(@dataholder, $line[3]);
+}
+close ORN;
+@orn = (&average(@dataholder) - 3*&stdev(@dataholder), &average(@dataholder) + 3*&stdev(@dataholder));
+undef(@dataholder);
+
+open TRAV, '<data/travers.txt';
+while(<TRAV>){
+	my @line = split;
+	chomp($line[3]);
+	push(@dataholder, $line[3]);
+}
+close TRAV;
+@trav = (&average(@dataholder) - 3*&stdev(@dataholder), &average(@dataholder) + 3*&stdev(@dataholder));
+undef(@dataholder);
+
+open BASE, '<data/base3.txt';
+while(<BASE>){
+	my @line = split;
+	chomp($line[3]);
+	push(@dataholder, $line[3]);
+}
+close BASE;
+@base3 = (&average(@dataholder) - 3*&stdev(@dataholder), &average(@dataholder) + 3*&stdev(@dataholder));
+undef(@dataholder);
+
+my @conf;
+open PLOTCONF, "<etc/plots.conf";
+while(<PLOTCONF>){
+	if(/_curvatureRANGE_/){
+		my $line = sprintf("min = %.2f\nmax = %.2f\n", $curv[0], $curv[1]);
+		push(@conf, $line);
+	}
+	elsif(/_ornsteinRANGE_/){
+		my $line = sprintf("min = %.2f\nmax = %.2f\n", $orn[0], $orn[1]);
+		push(@conf, $line);
+	}
+	elsif(/_traversRANGE_/){
+		my $line = sprintf("min = %.2f\nmax = %.2f\n", $trav[0], $trav[1]);
+		push(@conf, $line);
+	}
+	elsif(/_base3RANGE_/){
+		my $line = sprintf("min = %.2f\nmax = %.2f\n", $base3[0], $base3[1]);
+		push(@conf, $line);
+	}
+	else {
+		push(@conf, $_);
+	}
+}
+close PLOTCONF;
+open NEWCONF, ">etc/plots.conf";
+foreach(@conf){
+	print NEWCONF $_;
+}
+close NEWCONF;
+#### END OF RANGE SETUP
+
+
+#### CREATE PLOT
+
+if($plot){
+	print STDOUT "Plotting...";
+	`circos`;
+	print STDOUT " DONE\n";
+}
+
+
+####SUBROUTINES
+sub average{
+        my @data = @_;
+        my $length = @data;
+        if ($length == 0) {
+                die("Empty array\n");
+        }
+        my $total = 0;
+        foreach (@data) {
+                $total += $_;
+        }
+        my $average = $total / $length;
+        return $average;
+}
+sub stdev{
+        my @data = @_;
+        my $length = @data;
+        if($length == 1){
+                return 0;
+        }
+        my $average = &average(@data);
+        my $sqtotal = 0;
+        foreach(@data) {
+                $sqtotal += ($average-$_) ** 2;
+        }
+        my $std = ($sqtotal / (@data-1)) ** 0.5;
+        return $std;
+}

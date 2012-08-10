@@ -1,0 +1,63 @@
+#!/usr/bin/perl -w
+# Authors: Thomas Dybdal Pedersen
+# For license see /usr/biotools/CMG-biotools.license
+use strict;
+use Getopt::Long;
+
+my $filterlinks = "/usr/local/circos-0.62-1/tools/filterlinks/bin/filterlinks";
+
+#### INPUT CHECK
+my $input;
+my $ann;
+my $gene;
+my $output;
+
+if ($#ARGV < 0){
+	print "\n";
+	print "USAGE: blastAtlas -f <organismName> -c <configFile> -o <outputFile> -tidy\n";
+	print "Creates a blast atlas of the organism given in <organismName> based on the setup in the config file.\n";
+	print "\n";
+	print "-f\tThe name of the gbk file to use; with or without the .gbk extension <REQUIRED>\n";
+	print "-c\tThe name of the config file created by blastAtlasCf <REQUIRED>\n";
+	print "-o\tThe name of the plot file to create. If not specified no plot will be made.\n\tA plot can subsequently be created with \`genewiz -p <outputFile> <configFile>\`\n";
+	print "-tidy\tOnly used if plot is created. If set, all created files except for the plot\n\twill be deleted when the program finishes\n";
+	print "\n";
+	exit;
+}
+
+GetOptions ("f=s"	=> \$input,
+			"ann=s"	=> \$ann,
+			"g=s"	=> \$gene,
+			"o=s"	=> \$output);
+
+die unless -e $input;
+
+my @interval;
+
+open IN, "<${ann}";
+open OUT, ">filterlinks.conf";
+while(<IN>){
+	my @line = split;
+	next unless $line[0] ne "source";
+	next unless $line[0] ne "gene";
+	if($line[4] eq $gene){
+		push(@interval, "${line[1]}-${line[2]}");
+	}
+}
+print OUT "<conditions>\n\n";
+print OUT "span_1 = [?s]";
+print OUT join(',', @interval);
+print OUT "\n";
+print OUT "span_2 = [?s]";
+print OUT join(',', @interval);
+print OUT "\n\n</conditions>\n\ndelim = ;;";
+close OUT;
+close IN;
+
+if($output){
+	`${filterlinks} -links ${input} -configfile filterlinks.conf > ${output}`;
+}
+else {
+	print `${filterlinks} -links ${input} -configfile filterlinks.conf`;
+}
+`rm filterlinks.conf`;

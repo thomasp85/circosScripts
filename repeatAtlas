@@ -1,0 +1,386 @@
+#!/usr/bin/perl -w
+# Authors: Thomas Dybdal Pedersen
+# For license see /usr/biotools/CMG-biotools.license
+
+use Getopt::Long;
+
+my $location = "/media/sf_Documents/circosConv/";
+
+#### INPUT CHECK
+my $organism;
+my $name = "chr1";
+my $output;
+my $bin = 2500;
+my $cutlength = 100;
+my $cutevalue = 1e-10;
+my $abs;
+
+if ($#ARGV < 0){
+	print "\n";
+	print "USAGE: repeatAtlas -f <organismName> -b <binSize> -n <plotName> -o <outputFile> -abs\n";
+	print "Creates a repeat atlas of the organism given in <organismName> based on a genbank file.\n";
+	print "\n";
+	print "-f\tThe name of the gbk file to use; with or without the .gbk extension <REQUIRED>\n";
+	print "-b\tThe binsize to use for the lanes (default 2500)\n";
+	print "-n\tThe name to appear below the plot (default chr1)\n";
+	print "-o\tThe name of the plot file to create. Two files will be created: <outputFile>.png and <outputFile>.svg\n";
+	print "-abs\tFLAG. If set the binsize is read as bp, if not it is read as the number of bins\n";
+	print "\n";
+	exit;
+}
+elsif ($#ARGV == 0){
+	$organism = $ARGV[0];
+	$organism =~ s/\.gbk//;
+}
+else {
+	GetOptions ("f=s"	=> \$organism,
+				"b=i"	=> \$bin,
+				"abs"	=> \$abs,
+				"n=s"	=> \$name,
+				"o=s"	=> \$output);
+	
+	if (defined $organism){
+		$organism =~ s/\.gbk//;
+	}
+}
+
+if(! $organism){
+	die "No organism defined: use -f <organism>\n";
+}
+if(! -e "${organism}.gbk"){
+	if($organism eq "1"){
+		die "No organism defined: use -f <organism>\n";
+	}
+	die "Missing genbank file: ${organism}.gbk\n";
+}
+if($output){
+	if($output eq "1"){
+		$output = $organism;
+	}
+}
+$name =~ s/\s/_/g;
+#### END OF INPUT CHECK
+
+
+#### PARSING DATA
+my @tab = `saco_convert -I genbank -O tab ${organism}.gbk`;
+chomp(my $length = `/usr/biotools/saco_convert -I genbank -O length $organism.gbk`);
+if($bin){
+	$bin = $length/$bin unless $abs;
+}
+#### END OF DATA PARSING
+
+
+#### CREATE DIRECTORIES
+`mkdir data`;
+`mkdir etc`;
+#### END OF DIRECTORY CREATION
+
+
+#### CREATE KARYOTYPE FILE
+open KARYO, ">data/karyotype.txt";
+print KARYO "chr - chr1 ".$name." 0 ".$length." purple";
+close KARYO;
+#### END OF KARYOTYPE CREATION
+
+
+#### CREATING DATA
+print STDOUT "Calculating baseskew...";
+&baseskews;
+print STDOUT "DONE\nCalculating stacking energy...";
+&ornstein;
+print STDOUT "DONE\nBlasting for repeats...";
+&repeats;
+print STDOUT "DONE\n";
+&ann;
+my $bigbin = int($bin*5);
+`binLinks -bin_size ${bigbin} -links data/direct.txt -link_end 2 > data/hist.direct.txt`;
+`binLinks -bin_size ${bigbin} -links data/inverted.txt -link_end 2 > data/hist.inverted.txt`;
+
+#### END OF DATA CREATION
+
+
+#### COPY OF CONFIG FILES
+`cp ${location}etc/repeatAtlas/* etc/`;
+#### END OF CONFIG COPY
+
+
+#### SETUP RANGES
+my @gcRange;
+my @dataholder;
+open GCI, '<data/gcSkew.txt';
+while(<GCI>){
+	my @line = split;
+	chomp($line[3]);
+	push(@dataholder, $line[3]);
+}
+close GCI;
+@gcRange = (&average(@dataholder) - 3*&stdev(@dataholder), &average(@dataholder) + 3*&stdev(@dataholder));
+undef(@dataholder);
+
+my @conf;
+open PLOTCONF, "<etc/plots.conf";
+while(<PLOTCONF>){
+	if(/_gcRANGE_/){
+		my $line = sprintf("min = %.2f\nmax = %.2f\n", $gcRange[0], $gcRange[1]);
+		push(@conf, $line);
+	}
+	else {
+		push(@conf, $_);
+	}
+}
+close PLOTCONF;
+open NEWCONF, ">etc/plots.conf";
+foreach(@conf){
+	print NEWCONF;
+}
+close NEWCONF;
+#### END OF RANGE SETUP
+
+
+#### CREATE PLOT
+if($output){
+	`circos`;
+	`mv circos.png ${output}.png`;
+	`mv circos.svg ${output}.svg`;
+}
+#### END OF PLOTTING
+
+
+#### SUBROUTINE DEFINITIONS
+sub ann {
+	my @data = `/usr/biotools/saco_convert -I genbank -O annotation ${organism}.gbk`;
+	open ANN, ">data/rrna.txt";
+	foreach(@data){
+		my @line = split;
+		next unless $line[0] ne "source";
+		next unless $line[0] ne "gene";
+		if($line[4] eq "rRNA"){
+			print ANN "chr1 ".$line[1]." ".$line[2]." ".$line[4]."\n";
+		}	
+	}
+	close ANN;
+}
+sub baseskews {
+	my @data;
+	my @gcSkew;
+	my @atPercent;
+	my @gcBinned;
+	my @atBinned;
+	@data = `/usr/biotools/saco_convert -A dna2 -I genbank -O skews ${organism}.gbk`;
+	foreach(@data){
+		my @line = split;
+		push(@gcSkew, $line[2]);
+		push(@atPercent, $line[3]);
+	}
+	my $start;
+	my $end;
+	my $i;
+	my @gcSub;
+	my @atSub;
+	my $arrayLength = @gcSkew;
+	for($i=0; $i < $arrayLength; $i += $bin){
+		$start = int($i);
+		$end = int($i + $bin - 1);
+		$end = $arrayLength-1 unless $end < $arrayLength-1;
+		@gcSub = @gcSkew[$start .. $end];
+		@atSub = @atPercent[$start .. $end];
+		my $gcMean = &average(@gcSub);
+		my $atMean = &average(@atSub);
+		push(@gcBinned, "$start $end $gcMean");
+		push(@atBinned, "$start $end $atMean");
+		undef(@gcSub);
+		undef(@atSub);
+		undef($start);
+		undef($end);
+	}
+	
+	open GC, ">data/gcSkew.txt";
+	open AT, ">data/atPercent.txt";
+	foreach(@gcBinned){
+		print GC "chr1 ".$_."\n";
+	}
+	foreach(@atBinned){
+		print AT "chr1 ".$_."\n";
+	}
+	close GC;
+	close AT;
+}
+sub ornstein {
+	my @temptab = @tab;
+	my $i;
+	my @ornstein;
+	my %val = (
+		"AA" => -5.37,
+		"AC" => -10.51,
+		"AG" => -6.78,
+		"AT" => -6.57,
+		"CA" => -6.57,
+		"CC" => -8.26,
+		"CG" => -9.61,
+		"CT" => -6.78,
+		"GA" => -9.81,
+		"GC" => -14.59,
+		"GG" => -8.26,
+		"GT" => -10.51,
+		"TA" => -3.82,
+		"TC" => -9.81,
+		"TG" => -6.57,
+		"TT" => -5.37
+	);
+	foreach (@temptab) {
+		$_ = uc;
+		@seq = split(/\t/, $_);
+		for ($i = 0; $i+2 <= length($seq[1]); $i++) {
+			if (defined($val{substr($seq[1], $i, 2)})) {
+				push(@ornstein, $val{substr($seq[1], $i, 2)});
+			} else {
+				push(@ornstein, int(0));
+			}
+		}
+	}
+	undef(@temptab);
+	
+	my $start;
+	my $end;
+	my @ornBinned;
+	my @ornSub;
+	my @mean;
+	my $arrayLength = @ornstein;
+	for($i=0; $i < $arrayLength; $i += $bin){
+		$start = int($i);
+		$end = int($i + $bin - 1);
+		$end = $arrayLength-1 unless $end < $arrayLength-1;
+		@ornSub = @ornstein[$start .. $end];
+		my $ornMean = &average(@ornSub);
+		push(@ornBinned, "$start $end $ornMean");
+		push(@mean, $ornMean);
+		undef(@ornSub);
+		undef($start);
+		undef($end);
+	}
+	
+	my $transFac = 100;
+	my $mean = &average(@mean);
+	undef(@mean);
+	undef(@ornstein);
+	
+	open ORN, ">data/ornstein.txt";
+	foreach(@ornBinned){
+		my @line = split;
+		my $trans = ($line[2]-$mean)*($transFac**(abs($line[2]-$mean)));
+		print ORN "chr1 ".$line[0]." ".$line[1]." ".$trans."\n";
+	}
+	close ORN;
+}
+sub repeats {
+	open FSA, ">", "${organism}.db";
+	select FSA;
+	foreach (@tab) {
+		my @tmp = split(/\t/, $_);
+		$tmp[0] = "XXXX";
+		my $w = 10000;
+		my $o = 5000;
+		my $l = length($tmp[1]);
+		for (my $i = 0; $i <= $l; $i += $o){
+			my $s2 = substr($tmp[1], $i, $w);
+			my $ls2 = length($s2);
+			if ($ls2 < $w) {
+				my $pad = $w-$ls2;
+				$pad = "X"x$pad;
+				$s2 = $s2.$pad;
+			}
+			$s2 =~ s/(.{60})/$1\n/g;
+			print ">".$tmp[0]."_".eval($i+1)."-".eval($i+$w+1)."\n"; 
+			print $s2."\n";
+		}
+	}
+	close FSA;
+	
+	`formatdb -i ${organism}.db -p F -t ${organism}.db`;
+	`blastall -p blastn -F F -g F -d ${organism}.db -e 1 -i ${organism}.db -o ${organism}.blast`;
+	
+	my @blasttable = `/usr/biotools/indirect/blastntable.pl ${organism}.blast`;
+
+	open DIRECT, ">data/direct.txt";
+	open INVERTED, ">data/inverted.txt";
+	
+	my %hash;
+	my $n1;
+	my $n2;
+	foreach(@blasttable){
+		sub solveE {
+			my $ans;
+			my @input = @_;
+			my @char = split(//, $input[0]);
+			if ($char[0] eq "e"){
+				$ans = "1".$input[0];
+			} else {
+				$ans = $input[0];
+			}
+			$ans;
+		}
+		my @F = split;
+		$F[16] =~ /_([0-9]+)-[0-9]+$/;
+		my $c = $1+$F[10]-1;
+		my $d = $1+$F[11]-1;
+		$F[17] =~ /_([0-9]+)-[0-9]+$/;
+		my $e = $1+$F[13]-1;
+		my $f = $1+$F[14]-1;
+		my $g = solveE($F[7]);
+		if ($F[12] eq $F[15] && $d-$c >= $cutlength && $c != $e && $g < $cutevalue){
+			$n1 = "chr1_${c}_${d}_chr1_${e}_${f}";
+			$n2 = "chr1_${e}_${f}_chr1_${c}_${d}";
+			$n3 = "chr1_${d}_${c}_chr1_${f}_${e}";
+			$n4 = "chr1_${f}_${e}_chr1_${d}_${c}";
+			unless($hash{$n1}){
+				print DIRECT $n1." chr1 ".$c." ".$d." evalue=".$g."\n";
+				print DIRECT $n1." chr1 ".$e." ".$f." evalue=".$g."\n";
+				$hash{$n1} = 1;
+				$hash{$n2} = 1;
+				$hash{$n3} = 1;
+				$hash{$n4} = 1;
+			}
+		} elsif ($F[12] ne $F[15] && $d-$c >= $cutlength && $c != $e && $g < $cutevalue){
+			$n1 = "chr1_${c}_${d}_chr1_${e}_${f}";
+			$n2 = "chr1_${e}_${f}_chr1_${c}_${d}";
+			$n3 = "chr1_${d}_${c}_chr1_${f}_${e}";
+			$n4 = "chr1_${f}_${e}_chr1_${d}_${c}";
+			unless($hash{$n1}){
+				print INVERTED $n1." chr1 ".$c." ".$d." evalue=".$g."\n";
+				print INVERTED $n1." chr1 ".$e." ".$f." evalue=".$g."\n";
+				$hash{$n1} = 1;
+				$hash{$n2} = 1;
+				$hash{$n3} = 1;
+				$hash{$n4} = 1;
+			}
+		}
+	}
+}
+sub average{
+        my @data = @_;
+        my $length = @data;
+        if ($length == 0) {
+                die("Empty array\n");
+        }
+        my $total = 0;
+        foreach (@data) {
+                $total += $_;
+        }
+        my $average = $total / $length;
+        return $average;
+}
+sub stdev{
+        my @data = @_;
+        my $length = @data;
+        if($length == 1){
+                return 0;
+        }
+        my $average = &average(@data);
+        my $sqtotal = 0;
+        foreach(@data) {
+                $sqtotal += ($average-$_) ** 2;
+        }
+        my $std = ($sqtotal / (@data-1)) ** 0.5;
+        return $std;
+}

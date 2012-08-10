@@ -1,0 +1,153 @@
+#!/usr/bin/perl -w
+# Authors: Thomas Dybdal Pedersen
+# For license see /usr/biotools/CMG-biotools.license
+use strict;
+use List::Util qw(sum);
+use Getopt::Long;
+
+#### INPUT CHECK
+my $input;
+my $bin;
+my $name;
+my $output;
+my $abs;
+my $summary = "avg";
+my $column = 1;
+
+if ($#ARGV < 0){
+	print "\n";
+	print "USAGE: convertLane -f <dataFile> -b <binsize> -n <chromosomeName> -summary <avg/min/max> -col <columnInFile> -o <outputFile> -abs\n";
+	print "Convert lane data files from genewiz visualization to circos format.\n";
+	print "\n";
+	print "-f\t\tThe name of the gz file to use; Must be one created from genomeAtlas or blastAtlas<REQUIRED>\n";
+	print "-b\t\tThe binsize to use; if not specified the data will not be binned (slow)\n";
+	print "-n\t\tThe name of the chromosome as given in the karyotype file for the circos plot <REQUIRED>\n";
+	print "-summary\tThe summary statistic to use during binning. Must be either avg, min or max (default avg)\n";
+	print "-col\t\tThe column to take the data from in case of multicolumn datafiles\n";
+	print "-o\t\tThe name of the output file\n";
+	print "-abs\t\tFLAG: If set the binsize is absolute (exact length of bin) instead of the number of bins\n";
+	print "\n";
+	exit;
+}
+
+GetOptions ("f=s"	=> \$input,
+			"b=i"	=> \$bin,
+			"n=s"	=> \$name,
+			"abs"	=> \$abs,
+			"summary=s" => \$summary,
+			"col=i"	=> \$column,
+			"o=s"	=> \$output);
+
+die unless -e $input;
+
+#### END OF INPUT CHECK
+
+
+#### PARSING INPUT
+my @data = `gzip -d -c ${input}`;
+foreach(@data){
+	my @line = split;
+	$_ = $line[$column-1];
+	chomp;
+}
+my $length = @data;
+if($bin){
+	$bin = $length/$bin unless $abs;
+}
+#### END OF INPUT PARSING
+
+
+#### CALCULATIONS
+my @newdata;
+my @stat;
+my $start;
+my $end;
+my $i;
+if($bin){
+	my @subarray;
+	for($i=0; $i < $length; $i += $bin){
+		$start = int($i);
+		$end = int($i + $bin - 1);
+		$end = $length-1 unless $end < $length-1;
+		@subarray = @data[$start .. $end];
+		my $mean;
+		if($summary eq "avg"){
+			$mean = &average(@subarray);
+		}
+		elsif ($summary eq "max"){
+			@subarray = sort @subarray;
+			$mean = $subarray[-1];
+		}
+		elsif ($summary eq "min"){
+			@subarray = sort @subarray;
+			$mean = $subarray[0];
+		}
+		else {
+			die;
+		}
+		push(@newdata, "$start $end $mean");
+		push (@stat, $mean);
+		undef(@subarray);
+		undef($start);
+		undef($end);
+	}
+}
+else {
+	for($i=0; $i < $length; $i++){
+		if($data[$i] != 0){
+			if($data[$i] != $data[$i-1]){
+				$start = $i;
+			}
+			if($data[$i] != $data[$i+1]){
+				$end = $i;
+				push(@newdata, "$start $end $data[$i]");
+				push (@stat, $data[$i]);
+				undef($start);
+				undef($end);
+			}
+		}
+	}
+}
+#### END OF CALCULATIONS
+
+print "Mean: ".&average(@stat).". stDev: ".&stdev(@stat)."\n";
+
+#### CREATE OUTPUT
+open OUT, ">$output";
+select OUT;
+$i = 0;
+foreach(@newdata){
+	print $name." ".$_."\n";
+}
+close OUT;
+#### END OF OUTPUT CREATION
+
+
+####SUBROUTINES
+sub average{
+        my @data = @_;
+        my $length = @data;
+        if ($length == 0) {
+                die("Empty array\n");
+        }
+        my $total = 0;
+        foreach (@data) {
+                $total += $_;
+        }
+        my $average = $total / $length;
+        return $average;
+}
+sub stdev{
+        my @data = @_;
+        my $length = @data;
+        if($length == 1){
+                return 0;
+        }
+        my $average = &average(@data);
+        my $sqtotal = 0;
+        foreach(@data) {
+                $sqtotal += ($average-$_) ** 2;
+        }
+        my $std = ($sqtotal / (@data-1)) ** 0.5;
+        return $std;
+}

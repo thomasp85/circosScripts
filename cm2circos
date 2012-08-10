@@ -1,0 +1,48 @@
+#!/usr/bin/perl -w
+# Authors: Thomas Dybdal Pedersen
+# For license see /usr/biotools/CMG-biotools.license
+use strict;
+use Getopt::Long;
+
+#### INPUT CHECK
+my $input;
+my $name;
+
+if ($#ARGV < 0){
+	print "\n";
+	print "USAGE: cm2circos -f <cm2file> -n <colorScaleName>\n";
+	print "Converts a cm2 colorscale file to a conf file that can be included in circos\n";
+	print "\n";
+	print "-f\tThe name of the cm2 file to convert <REQUIRED>\n";
+	print "-n\tThe name to use for the colorscale. Each color willget this name with a numeric suffix <REQUIRED>\n";
+	print "\n";
+	print "The script will output a file with the name <cm2file>.conf\n";
+	print "\n";
+	exit;
+}
+
+if ($#ARGV == 0){
+	$input = $ARGV[0];
+}
+else {
+	GetOptions ("f=s"	=> \$input,
+				"n=s"	=> \$name);
+}
+die unless -e $input;
+
+#### END OF INPUT CHECK
+
+open IN, "<${input}";
+open OUT, ">${input}.conf";
+my $i = 1;
+while(<IN>){
+	my @color = split;
+	foreach(@color){
+		$_ *= 256;
+		$_ = int;
+	}
+	print OUT $name.$i." = ".$color[0].",".$color[1].",".$color[2]."\n";
+	$i++
+}
+close IN;
+close OUT;

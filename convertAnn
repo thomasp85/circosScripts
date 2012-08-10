@@ -1,0 +1,81 @@
+#!/usr/bin/perl -w
+# Authors: Thomas Dybdal Pedersen
+# For license see /usr/biotools/CMG-biotools.license
+use strict;
+use List::Util qw(sum);
+use Getopt::Long;
+
+#### INPUT CHECK
+my $input;
+my $name;
+my $output;
+
+if ($#ARGV < 0){
+	print "\n";
+	print "USAGE: convertAnn -f <dataFile> -n <chromosomeName> -o <outputFile>\n";
+	print "Convert annotation info from genewiz format to circos format\n";
+	print "\n";
+	print "-f\tThe name of the ann file to use <REQUIRED>\n";
+	print "-n\tThe name of the chromosome as given in the karyotype file for the circos plot <REQUIRED>\n";
+	print "-o\tThe prefix of the output files. The script will create 3 files:\n";
+	print "\t\t<outputFile>.plus.txt\n";
+	print "\t\t<outputFile>.minus.txt\n";
+	print "\t\t<outputFile>.ANN.txt\n";
+	print "\n";
+	exit;
+}
+
+GetOptions ("f=s"	=> \$input,
+			"n=s"	=> \$name,
+			"o=s"	=> \$output);
+
+die unless -e $input;
+
+#### END OF INPUT CHECK
+
+
+#### PARSING INPUT
+open IN, "<${input}";
+open PLUS, ">${output}.plus.txt";
+open MINUS, ">${output}.minus.txt";
+open ANN, ">${output}.ANN.txt";
+while(<IN>){
+	my @line = split;
+	next unless $line[0] ne "source";
+	next unless $line[0] ne "gene";
+	if($line[3] eq "+"){
+		print PLUS $name." ".$line[1]." ".$line[2];
+		if($line[4] eq "tRNA"){
+			print PLUS " color=hue110\n";
+		}
+		elsif($line[4] eq "rRNA"){
+			print PLUS " color=hue310\n";
+		}
+		else {
+			print PLUS "\n";
+		}
+	}
+	elsif($line[3] eq "-"){
+		print MINUS $name." ".$line[1]." ".$line[2];
+		if($line[4] eq "tRNA"){
+			print MINUS " color=hue110\n";
+		}
+		elsif($line[4] eq "rRNA"){
+			print MINUS " color=hue310\n";
+		}
+		else {
+			print MINUS "\n";
+		}
+	}
+	else {
+		die;
+	}
+	if($line[4] ne "tRNA" && $line[4] ne "rRNA" && $line[4] ne "CDS"){
+		print ANN $name." ".$line[1]." ".$line[2]." ".$line[4]."\n";
+	}
+}
+close IN;
+close PLUS;
+close MINUS;
+close ANN;
+#### END OF INPUT PARSING

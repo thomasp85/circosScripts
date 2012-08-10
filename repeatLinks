@@ -1,0 +1,144 @@
+#!/usr/bin/perl -w
+# Authors: Thomas Dybdal Pedersen
+# For license see /usr/biotools/CMG-biotools.license
+use strict;
+use Getopt::Long;
+
+my $location = "/media/sf_Documents/circosConv/";
+
+#### INPUT CHECK
+my $input;
+my $name;
+my $output;
+my $length = 50;
+my $evalue = 1e-10;
+my $format = 1;
+
+if ($#ARGV < 0){
+	print "\n";
+	print "USAGE: repeatLinks -f <genbankFile> -n <chromosomeName> -o <outputPrefix> -l <lengthCutOff> -e <evalueCutOff>\n";
+	print "Creates link files for circos to visualise repeats\n";
+	print "\n";
+	print "-f\tThe name of the gbk file to use <REQUIRED>\n";
+	print "-n\tThe name of the chromosome as given in the karyotype file for the circos plot <REQUIRED>\n";
+	print "-o\tThe prefix for the two output files. This will beappended with \"direct.txt\" and \"inverted.txt\"\n";
+	print "-l\tThe minimum length of a match (default 50)\n";
+	print "-e\tThe maximum e-value of a match (default 1e-10)\n";
+	print "\n";
+	exit;
+}
+
+GetOptions ("f=s"	=> \$input,
+			"n=s"	=> \$name,
+			"o=s"	=> \$output,
+			"l=i"	=> \$length,
+			"e=f"	=> \$evalue,
+			"format=i" => \$format);
+
+die unless -e $input;
+
+#### END OF INPUT CHECK
+my @tab = `saco_convert -I genbank -O tab ${input}`;
+
+&repeats;
+
+my @files = ("${input}.db", "${input}.db.nhr", "${input}.db.nin", "${input}.db.nsq", "${input}.blast");
+foreach (@files){
+	unlink;
+}
+
+sub repeats {
+	open FSA, ">", "${input}.db";
+	select FSA;
+	foreach (@tab) {
+		my @tmp = split(/\t/, $_);
+		$tmp[0] = "XXXX" unless $tmp[0];
+		my $w = 10000;
+		my $o = 5000;
+		my $l = length($tmp[1]);
+		for (my $i = 0; $i <= $l; $i += $o){
+			my $s2 = substr($tmp[1], $i, $w);
+			my $ls2 = length($s2);
+			if ($ls2 < $w) {
+				my $pad = $w-$ls2;
+				$pad = "X"x$pad;
+				$s2 = $s2.$pad;
+			}
+			$s2 =~ s/(.{60})/$1\n/g;
+			print ">".$tmp[0]."_".eval($i+1)."-".eval($i+$w+1)."\n"; 
+			print $s2."\n";
+		}
+	}
+	close FSA;
+	
+	`formatdb -i ${input}.db -p F -t ${input}.db`;
+	`blastall -p blastn -F F -g F -d ${input}.db -e 1 -i ${input}.db -o ${input}.blast`;
+	
+	my @blasttable = `/usr/biotools/indirect/blastntable.pl ${input}.blast`;
+
+	my @direct;
+	my @inverted;
+	
+	open DIRECT, ">${output}.direct.txt";
+	open INVERTED, ">${output}.inverted.txt";
+	
+	my %hash;
+	my $n1;
+	my $n2;
+	foreach(@blasttable){
+		sub solveE {
+			my $ans;
+			my @input = @_;
+			my @char = split(//, $input[0]);
+			if ($char[0] eq "e"){
+				$ans = "1".$input[0];
+			} else {
+				$ans = $input[0];
+			}
+			$ans;
+		}
+		my @F = split;
+		$F[16] =~ /_([0-9]+)-[0-9]+$/;
+		my $c = $1+$F[10]-1;
+		my $d = $1+$F[11]-1;
+		$F[17] =~ /_([0-9]+)-[0-9]+$/;
+		my $e = $1+$F[13]-1;
+		my $f = $1+$F[14]-1;
+		my $g = solveE($F[7]);
+		if ($F[12] eq $F[15] && $d-$c >= $length && $c != $e && $g < $evalue){
+			$n1 = "${name}_${c}_${d}_${name}_${e}_${f}";
+			$n2 = "${name}_${e}_${f}_${name}_${c}_${d}";
+			unless($hash{$n1}){
+				if($format==1){
+					print DIRECT $name." ".$c." ".$d." ".$name." ".$e." ".$f." evalue=".$g."\n";
+				}
+				elsif($format==2){
+					print DIRECT $n1." ".$name." ".$c." ".$d." evalue=".$g."\n";
+					print DIRECT $n1." ".$name." ".$e." ".$f." evalue=".$g."\n";
+				}
+				else {
+					die;
+				}
+				$hash{$n1} = 1;
+				$hash{$n2} = 1;
+			}
+		} elsif ($F[12] ne $F[15] && $d-$c >= $length && $c != $e && $g < $evalue){
+			$n1 = "${name}_${c}_${d}_${name}_${e}_${f}";
+			$n2 = "${name}_${e}_${f}_${name}_${c}_${d}";
+			unless($hash{$n1}){
+				if($format==1){
+					print INVERTED $name." ".$c." ".$d." ".$name." ".$e." ".$f." evalue=".$g."\n";
+				}
+				elsif($format==2){
+					print INVERTED $n1." ".$name." ".$c." ".$d." evalue=".$g."\n";
+					print INVERTED $n1." ".$name." ".$e." ".$f." evalue=".$g."\n";
+				}
+				else {
+					die;
+				}
+				$hash{$n1} = 1;
+				$hash{$n2} = 1;
+			}
+		}
+	}
+}
