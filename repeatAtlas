@@ -2,9 +2,11 @@
 # Authors: Thomas Dybdal Pedersen
 # For license see /usr/biotools/CMG-biotools.license
 
+use strict;
 use Getopt::Long;
+use File::Copy;
 
-my $location = "/media/sf_Documents/circosConv/";
+my $location = "/media/sf_Dropbox/GitHub/circosScripts/";
 
 #### INPUT CHECK
 my $organism;
@@ -13,6 +15,9 @@ my $output;
 my $bin = 2500;
 my $cutlength = 100;
 my $cutevalue = 1e-10;
+my $pRule = "50/50";
+my $repeats = 1;
+my $paralogues = 1;
 my $abs;
 
 if ($#ARGV < 0){
@@ -25,6 +30,7 @@ if ($#ARGV < 0){
 	print "-n\tThe name to appear below the plot (default chr1)\n";
 	print "-o\tThe name of the plot file to create. Two files will be created: <outputFile>.png and <outputFile>.svg\n";
 	print "-abs\tFLAG. If set the binsize is read as bp, if not it is read as the number of bins\n";
+	print "-pRule\tThe rule that defines paralogues if these are plotted. The format is x/y where x is the 50% conserved\n\t\tand y is the length compared to the largest sequence (default 50/50)\n";
 	print "\n";
 	exit;
 }
@@ -37,6 +43,9 @@ else {
 				"b=i"	=> \$bin,
 				"abs"	=> \$abs,
 				"n=s"	=> \$name,
+				"pRule=s"	=> \$pRule,
+				"rep=i"	=> \$repeats,
+				"para=i"	=> \$paralogues,
 				"o=s"	=> \$output);
 	
 	if (defined $organism){
@@ -72,8 +81,8 @@ if($bin){
 
 
 #### CREATE DIRECTORIES
-`mkdir data`;
-`mkdir etc`;
+mkdir 'data';
+mkdir 'etc';
 #### END OF DIRECTORY CREATION
 
 
@@ -89,11 +98,28 @@ print STDOUT "Calculating baseskew...";
 &baseskews;
 print STDOUT "DONE\nCalculating stacking energy...";
 &ornstein;
-print STDOUT "DONE\nBlasting for repeats...";
-&repeats;
+if($repeats){
+	print STDOUT "DONE\nBlasting for repeats...";
+	&repeats;
+}
+else{
+	open DIR, ">data/direct.txt";
+	close DIR;
+	open INV, ">data/inverted.txt";
+	close INV;
+}
+if($paralogues){
+	print STDOUT "DONE\nFinding paralogues...";
+	&paralogue;
+}
+else{
+	open PARA, ">data/paralogue.txt";
+	close PARA;
+}
 print STDOUT "DONE\n";
 &ann;
 my $bigbin = int($bin*5);
+
 `binLinks -bin_size ${bigbin} -links data/direct.txt -link_end 2 > data/hist.direct.txt`;
 `binLinks -bin_size ${bigbin} -links data/inverted.txt -link_end 2 > data/hist.inverted.txt`;
 
@@ -101,7 +127,12 @@ my $bigbin = int($bin*5);
 
 
 #### COPY OF CONFIG FILES
-`cp ${location}etc/repeatAtlas/* etc/`;
+copy("${location}etc/repeatAtlas/circos.conf", 'etc/');
+copy("${location}etc/repeatAtlas/customColors.conf", 'etc/');
+copy("${location}etc/repeatAtlas/ideogram.conf", 'etc/');
+copy("${location}etc/repeatAtlas/links.conf", 'etc/');
+copy("${location}etc/repeatAtlas/plots.conf", 'etc/');
+copy("${location}etc/repeatAtlas/ticks.conf", 'etc/');
 #### END OF CONFIG COPY
 
 
@@ -141,8 +172,8 @@ close NEWCONF;
 #### CREATE PLOT
 if($output){
 	`circos`;
-	`mv circos.png ${output}.png`;
-	`mv circos.svg ${output}.svg`;
+	move("circos.png", "${output}.png");
+	move("circos.svg", "${output}.svg");
 }
 #### END OF PLOTTING
 
@@ -161,18 +192,22 @@ sub ann {
 	}
 	close ANN;
 }
+
 sub baseskews {
-	my @data;
 	my @gcSkew;
 	my @atPercent;
 	my @gcBinned;
 	my @atBinned;
-	@data = `/usr/biotools/saco_convert -A dna2 -I genbank -O skews ${organism}.gbk`;
-	foreach(@data){
+	`/usr/biotools/saco_convert -A dna2 -I genbank -O skews ${organism}.gbk > temp`;
+	open TEMP, "<temp";
+	while(<TEMP>){
+		chomp;
 		my @line = split;
 		push(@gcSkew, $line[2]);
 		push(@atPercent, $line[3]);
 	}
+	close TEMP;
+	unlink("temp");
 	my $start;
 	my $end;
 	my $i;
@@ -206,6 +241,7 @@ sub baseskews {
 	close GC;
 	close AT;
 }
+
 sub ornstein {
 	my @temptab = @tab;
 	my $i;
@@ -230,7 +266,7 @@ sub ornstein {
 	);
 	foreach (@temptab) {
 		$_ = uc;
-		@seq = split(/\t/, $_);
+		my @seq = split(/\t/, $_);
 		for ($i = 0; $i+2 <= length($seq[1]); $i++) {
 			if (defined($val{substr($seq[1], $i, 2)})) {
 				push(@ornstein, $val{substr($seq[1], $i, 2)});
@@ -329,10 +365,10 @@ sub repeats {
 		my $f = $1+$F[14]-1;
 		my $g = solveE($F[7]);
 		if ($F[12] eq $F[15] && $d-$c >= $cutlength && $c != $e && $g < $cutevalue){
-			$n1 = "chr1_${c}_${d}_chr1_${e}_${f}";
-			$n2 = "chr1_${e}_${f}_chr1_${c}_${d}";
-			$n3 = "chr1_${d}_${c}_chr1_${f}_${e}";
-			$n4 = "chr1_${f}_${e}_chr1_${d}_${c}";
+			my $n1 = "chr1_${c}_${d}_chr1_${e}_${f}";
+			my $n2 = "chr1_${e}_${f}_chr1_${c}_${d}";
+			my $n3 = "chr1_${d}_${c}_chr1_${f}_${e}";
+			my $n4 = "chr1_${f}_${e}_chr1_${d}_${c}";
 			unless($hash{$n1}){
 				print DIRECT $n1." chr1 ".$c." ".$d." evalue=".$g."\n";
 				print DIRECT $n1." chr1 ".$e." ".$f." evalue=".$g."\n";
@@ -342,10 +378,10 @@ sub repeats {
 				$hash{$n4} = 1;
 			}
 		} elsif ($F[12] ne $F[15] && $d-$c >= $cutlength && $c != $e && $g < $cutevalue){
-			$n1 = "chr1_${c}_${d}_chr1_${e}_${f}";
-			$n2 = "chr1_${e}_${f}_chr1_${c}_${d}";
-			$n3 = "chr1_${d}_${c}_chr1_${f}_${e}";
-			$n4 = "chr1_${f}_${e}_chr1_${d}_${c}";
+			my $n1 = "chr1_${c}_${d}_chr1_${e}_${f}";
+			my $n2 = "chr1_${e}_${f}_chr1_${c}_${d}";
+			my $n3 = "chr1_${d}_${c}_chr1_${f}_${e}";
+			my $n4 = "chr1_${f}_${e}_chr1_${d}_${c}";
 			unless($hash{$n1}){
 				print INVERTED $n1." chr1 ".$c." ".$d." evalue=".$g."\n";
 				print INVERTED $n1." chr1 ".$e." ".$f." evalue=".$g."\n";
@@ -355,6 +391,48 @@ sub repeats {
 				$hash{$n4} = 1;
 			}
 		}
+	}
+	my @trash = ("formatdb.log", "${organism}.blast", "${organism}.db", "${organism}.db.nhr", "${organism}.db.nin", "${organism}.db.nsq");
+	foreach(@trash){
+		unlink;
+	}
+}
+sub paralogue{
+	`saco_convert -I genbank -O fasta ${organism}.gbk > temp.fna`;
+	`prodigalrunner temp.fna`;
+	my @trash = ("temp.fna", "temp.gff", "temp_prodigal.gbk", "temp_prodigal.orf.fna");
+	foreach(@trash){
+		unlink;
+	}
+	copy("temp_prodigal.orf.fsa", "database");
+	`formatdb -i database`;
+	`/usr/biotools/blast/bin/blastall -p blastp -F 0 -d database -e 1e-5 -m 8 -i temp_prodigal.orf.fsa -o temp.blast`;
+	open BLAST, "<temp.blast";
+	open OUT, ">data/paralogue.txt";
+	my %hash;
+	my @rules = split("/", $pRule);
+	$rules[1] = $rules[1]/100;
+	while(<BLAST>){
+		my @line = split;
+		next if ($line[0] eq $line[1]); #Test if two different CDS' are compared
+		next if ($line[2] < $rules[0]); #Test if conservation is above 50 %
+		next if ($line[3]/($line[7] < $line[9] ? $line[9] : $line[7]) < $rules[1]); #Test whether allignment constitutes over 50% of max length
+		my $comb1 = $line[0]."_".$line[1];
+		my $comb2 = $line[1]."_".$line[0];
+		next if $hash{$comb1};
+		$hash{$comb1} = 1;
+		$hash{$comb2} = 1;
+		$line[0] =~ /^.*_CDS_(\d+)-(\d+)$/ or die;
+		print OUT $comb1." chr1 ".$1." ".$2."\n";
+		$line[1] =~ /^.*_CDS_(\d+)-(\d+)$/;
+		print OUT $comb1." chr1 ".$1." ".$2."\n";
+	}
+	close BLAST;
+	close OUT;
+	undef(@trash);
+	@trash = ("database", "database.phr", "database.pin", "database.psq", "formatdb.log", "temp.blast", "temp_prodigal.orf.fsa");
+	foreach(@trash){
+		unlink;
 	}
 }
 sub average{
